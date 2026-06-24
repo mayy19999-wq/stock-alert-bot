@@ -1,0 +1,20 @@
+services:
+  - type: worker
+    name: stock-alert-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false          # set manually in Render dashboard
+      - key: TELEGRAM_CHAT_ID
+        sync: false          # set manually in Render dashboard
+      - key: MAX_ALERTS_PER_DAY
+        value: "4"
+      - key: RSI_THRESHOLD
+        value: "40"
+      - key: RVOL_THRESHOLD
+        value: "2.0"
+      - key: WATCHLIST
+        value: ""            # leave blank to use the built-in default list
