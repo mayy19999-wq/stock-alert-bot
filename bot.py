@@ -72,18 +72,17 @@ def _rsi(closes: pd.Series, period: int = 14) -> Optional[float]:
     return float(100 - (100 / (1 + avg_g.iloc[-1] / last_l)))
 
 
-def _rvol(volumes: pd.Series, now_et: datetime) -> Optional[float]:
-    """Pace-adjusted today volume divided by 20-day average daily volume."""
-    if len(volumes) < 2:
+def _rvol(symbol: str) -> Optional[float]:
+    """Relative volume: regularMarketVolume / averageVolume from ticker.info."""
+    try:
+        info = yf.Ticker(symbol).info
+        today_vol = info.get("regularMarketVolume")
+        avg_vol = info.get("averageVolume")
+        if not today_vol or not avg_vol or avg_vol <= 0:
+            return None
+        return today_vol / avg_vol
+    except Exception:
         return None
-    today_vol = float(volumes.iloc[-1])
-    avg_vol = float(volumes.iloc[:-1].tail(20).mean())
-    if avg_vol <= 0 or np.isnan(avg_vol):
-        return None
-    # Minutes elapsed since 9:30 AM ET (570 = 9 * 60 + 30)
-    elapsed = max(1, now_et.hour * 60 + now_et.minute - 570)
-    fraction = min(1.0, elapsed / 390)  # 390 min = full 6.5-hr trading day
-    return (today_vol / fraction) / avg_vol
 
 
 def _build_reason(closes: pd.Series, rsi: float, rvol: float) -> str:
@@ -128,7 +127,7 @@ def _is_market_hours(now_et: datetime) -> bool:
     return time(9, 30) <= t < time(16, 0)
 
 
-def _scan(watchlist: list[str], now_et: datetime) -> list[dict]:
+def _scan(watchlist: list[str]) -> list[dict]:
     try:
         raw = yf.download(
             tickers=watchlist,
@@ -149,11 +148,8 @@ def _scan(watchlist: list[str], now_et: datetime) -> list[dict]:
         try:
             if is_multi:
                 closes = raw["Close"][symbol].dropna()
-                volumes = raw["Volume"][symbol].dropna()
             else:
-                # Single-ticker download has no MultiIndex
                 closes = raw["Close"].dropna()
-                volumes = raw["Volume"].dropna()
 
             if len(closes) < 16:
                 continue
@@ -162,13 +158,15 @@ def _scan(watchlist: list[str], now_et: datetime) -> list[dict]:
             if rsi is None or rsi >= RSI_MAX:
                 continue
 
-            rvol = _rvol(volumes, now_et)
+            rvol = _rvol(symbol)
             if rvol is None or rvol < RVOL_MIN:
                 continue
 
             price = float(closes.iloc[-1])
             prev_close = float(closes.iloc[-2])
-            score = round((RSI_MAX - rsi) * rvol, 2)
+            rsi_factor = (RSI_MAX - rsi) / RSI_MAX
+            rvol_factor = min(rvol, 20.0) / 20.0
+            score = round(1 + 9 * (rsi_factor * 0.6 + rvol_factor * 0.4), 1)
 
             # 5-day trend for direction signal
             ref = float(closes.iloc[-5]) if len(closes) >= 5 else prev_close
@@ -228,11 +226,13 @@ def _format(s: dict) -> str:
     tp1   = round(entry * 1.08, 2)
     tp2   = round(entry * 1.15, 2)
     tp3   = round(entry * 1.25, 2)
+    rvol_val = s["rvol"]
+    rvol_str = f"{min(rvol_val, 20.0):.2f}+" if rvol_val > 20 else f"{rvol_val:.2f}"
     return (
         f"\U0001f6a8 *ALERT: ${s['ticker']}*\n"
         f"Price:     `${entry}` ({sign}{chg:.1f}%)\n"
         f"RSI:       `{s['rsi']}`\n"
-        f"RVOL:      `{s['rvol']}x`\n"
+        f"RVOL:      `{rvol_str}x`\n"
         f"Score:     `{s['score']}`\n"
         f"Direction: {s['direction']}\n"
         f"\n"
@@ -261,7 +261,7 @@ async def run_scan(bot: Bot, mgr: _AlertManager) -> None:
     log.info("Scanning %d tickers at %s ET  (alerts remaining: %d)",
              len(wl), now_et.strftime("%H:%M"), remaining)
 
-    signals = [s for s in _scan(wl, now_et) if not mgr.skip(s["ticker"])]
+    signals = [s for s in _scan(wl) if not mgr.skip(s["ticker"])]
 
     if not signals:
         log.info("No qualifying signals.")
