@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 ET = pytz.timezone("America/New_York")
 
 BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
-CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
+CHAT_ID: str = os.getenv("CHAT_ID", "")
 MAX_ALERTS: int = int(os.getenv("MAX_ALERTS_PER_DAY", "4"))
 RSI_MAX: float = float(os.getenv("RSI_THRESHOLD", "40"))
 RVOL_MIN: float = float(os.getenv("RVOL_THRESHOLD", "2.0"))
@@ -242,7 +242,7 @@ async def main() -> None:
     if not BOT_TOKEN:
         raise SystemExit("TELEGRAM_BOT_TOKEN is not set.")
     if not CHAT_ID:
-        raise SystemExit("TELEGRAM_CHAT_ID is not set.")
+        raise SystemExit("CHAT_ID is not set.")
 
     bot = Bot(token=BOT_TOKEN)
     mgr = _AlertManager()

@@ -8,7 +8,7 @@ services:
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false          # set manually in Render dashboard
-      - key: TELEGRAM_CHAT_ID
+      - key: CHAT_ID
         sync: false          # set manually in Render dashboard
       - key: MAX_ALERTS_PER_DAY
         value: "4"
