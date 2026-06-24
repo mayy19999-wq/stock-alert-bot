@@ -187,13 +187,24 @@ class _AlertManager:
 def _format(s: dict) -> str:
     chg = (s["price"] - s["prev_close"]) / s["prev_close"] * 100
     sign = "+" if chg >= 0 else ""
+    entry = s["price"]
+    stop  = round(entry * 0.95, 2)
+    tp1   = round(entry * 1.08, 2)
+    tp2   = round(entry * 1.15, 2)
+    tp3   = round(entry * 1.25, 2)
     return (
         f"\U0001f6a8 *ALERT: ${s['ticker']}*\n"
-        f"Price:     `${s['price']}` ({sign}{chg:.1f}%)\n"
+        f"Price:     `${entry}` ({sign}{chg:.1f}%)\n"
         f"RSI:       `{s['rsi']}`\n"
         f"RVOL:      `{s['rvol']}x`\n"
         f"Score:     `{s['score']}`\n"
-        f"Direction: {s['direction']}"
+        f"Direction: {s['direction']}\n"
+        f"\n"
+        f"Entry:     `${entry}`\n"
+        f"Stop Loss: `${stop}` (-5%)\n"
+        f"TP1:       `${tp1}` (+8%)\n"
+        f"TP2:       `${tp2}` (+15%)\n"
+        f"TP3:       `${tp3}` (+25%)"
     )
 
 
