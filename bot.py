@@ -86,6 +86,41 @@ def _rvol(volumes: pd.Series, now_et: datetime) -> Optional[float]:
     return (today_vol / fraction) / avg_vol
 
 
+def _build_reason(closes: pd.Series, rsi: float, rvol: float) -> str:
+    parts = []
+
+    # RSI context: compute RSI for up to 10 prior days
+    rsi_history = []
+    for i in range(1, 11):
+        if len(closes) - i >= 15:
+            r = _rsi(closes.iloc[:-i])
+            if r is not None:
+                rsi_history.append(r)
+
+    if rsi_history and rsi < min(rsi_history):
+        parts.append(f"lowest RSI in {len(rsi_history) + 1} days ({rsi})")
+    elif rsi_history:
+        drop = round(rsi_history[0] - rsi, 1)
+        if drop >= 5:
+            parts.append(f"RSI fell {drop} pts today ({rsi})")
+        else:
+            parts.append(f"RSI oversold at {rsi}")
+    else:
+        parts.append(f"RSI oversold at {rsi}")
+
+    # RVOL context
+    parts.append(f"volume {rvol}x daily avg")
+
+    # Price action: within 3% of 26-day low?
+    price = float(closes.iloc[-1])
+    prev  = float(closes.iloc[-2])
+    low26 = float(closes.tail(26).min())
+    if price <= low26 * 1.03:
+        parts.append("bouncing off 26-day low" if price >= prev else "near 26-day low")
+
+    return "; ".join(parts)
+
+
 def _is_market_hours(now_et: datetime) -> bool:
     if now_et.weekday() >= 5:  # Saturday=5, Sunday=6
         return False
@@ -147,6 +182,7 @@ def _scan(watchlist: list[str], now_et: datetime) -> list[dict]:
                 "rvol": round(rvol, 2),
                 "score": score,
                 "direction": direction,
+                "reason": _build_reason(closes, round(rsi, 1), round(rvol, 2)),
             })
         except Exception as exc:
             log.debug("Skip %s: %s", symbol, exc)
@@ -204,7 +240,9 @@ def _format(s: dict) -> str:
         f"Stop Loss: `${stop}` (-5%)\n"
         f"TP1:       `${tp1}` (+8%)\n"
         f"TP2:       `${tp2}` (+15%)\n"
-        f"TP3:       `${tp3}` (+25%)"
+        f"TP3:       `${tp3}` (+25%)\n"
+        f"\n"
+        f"📌 *Why selected:* {s['reason']}"
     )
 
 
