@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Volatile small-cap stock scanner — sends Telegram alerts when
-RSI < 40 AND RVOL > 2x, max 4 alerts/day ranked by score.
+RSI < 35 AND RVOL > 2.5x AND score >= 6/10, max 1 alert/scan, 3/day.
 """
 
 import asyncio
@@ -32,9 +32,11 @@ ET = pytz.timezone("America/New_York")
 
 BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID: str = os.getenv("CHAT_ID", "")
-MAX_ALERTS: int = int(os.getenv("MAX_ALERTS_PER_DAY", "4"))
-RSI_MAX: float = float(os.getenv("RSI_THRESHOLD", "40"))
-RVOL_MIN: float = float(os.getenv("RVOL_THRESHOLD", "2.0"))
+MAX_ALERTS: int = int(os.getenv("MAX_ALERTS_PER_DAY", "3"))
+RSI_MAX: float = float(os.getenv("RSI_THRESHOLD", "35"))
+RVOL_MIN: float = float(os.getenv("RVOL_THRESHOLD", "2.5"))
+SCORE_MIN: float = float(os.getenv("SCORE_THRESHOLD", "6.0"))
+PRICE_MIN: float = float(os.getenv("PRICE_MIN", "2.0"))
 
 # Override via WATCHLIST env var (comma-separated tickers).
 _DEFAULT_WATCHLIST: list[str] = [
@@ -163,10 +165,15 @@ def _scan(watchlist: list[str]) -> list[dict]:
                 continue
 
             price = float(closes.iloc[-1])
+            if price < PRICE_MIN:
+                continue
+
             prev_close = float(closes.iloc[-2])
             rsi_factor = (RSI_MAX - rsi) / RSI_MAX
             rvol_factor = min(rvol, 20.0) / 20.0
             score = round(1 + 9 * (rsi_factor * 0.6 + rvol_factor * 0.4), 1)
+            if score < SCORE_MIN:
+                continue
 
             # 5-day trend for direction signal
             ref = float(closes.iloc[-5]) if len(closes) >= 5 else prev_close
@@ -268,7 +275,7 @@ async def run_scan(bot: Bot, mgr: _AlertManager) -> None:
         return
 
     signals.sort(key=lambda s: s["score"], reverse=True)
-    to_send = signals[:remaining]
+    to_send = signals[:1]  # max 1 alert per scan
     log.info("Qualified: %d  Sending: %d", len(signals), len(to_send))
 
     for s in to_send:
@@ -310,8 +317,8 @@ async def main() -> None:
     scheduler.start()
 
     log.info("Bot live — every 30 min, Mon–Fri 9:30–16:00 ET")
-    log.info("RSI < %.0f | RVOL > %.1fx | max %d alerts/day",
-             RSI_MAX, RVOL_MIN, MAX_ALERTS)
+    log.info("RSI < %.0f | RVOL > %.1fx | score >= %.1f | price > $%.2f | max 1/scan %d/day",
+             RSI_MAX, RVOL_MIN, SCORE_MIN, PRICE_MIN, MAX_ALERTS)
 
     # Immediate scan on cold start so we don't wait up to 30 min.
     await run_scan(bot, mgr)
