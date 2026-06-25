@@ -10,7 +10,6 @@ import os
 from datetime import date, datetime, time
 from typing import Optional
 
-import numpy as np
 import pandas as pd
 import pytz
 import yfinance as yf
@@ -74,52 +73,13 @@ def _rsi(closes: pd.Series, period: int = 14) -> Optional[float]:
     return float(100 - (100 / (1 + avg_g.iloc[-1] / last_l)))
 
 
-def _rvol(symbol: str) -> Optional[float]:
+def _rvol(info: dict) -> Optional[float]:
     """Relative volume: regularMarketVolume / averageVolume from ticker.info."""
-    try:
-        info = yf.Ticker(symbol).info
-        today_vol = info.get("regularMarketVolume")
-        avg_vol = info.get("averageVolume")
-        if not today_vol or not avg_vol or avg_vol <= 0:
-            return None
-        return today_vol / avg_vol
-    except Exception:
+    today_vol = info.get("regularMarketVolume")
+    avg_vol = info.get("averageVolume")
+    if not today_vol or not avg_vol or avg_vol <= 0:
         return None
-
-
-def _build_reason(closes: pd.Series, rsi: float, rvol: float) -> str:
-    parts = []
-
-    # RSI context: compute RSI for up to 10 prior days
-    rsi_history = []
-    for i in range(1, 11):
-        if len(closes) - i >= 15:
-            r = _rsi(closes.iloc[:-i])
-            if r is not None:
-                rsi_history.append(r)
-
-    if rsi_history and rsi < min(rsi_history):
-        parts.append(f"lowest RSI in {len(rsi_history) + 1} days ({rsi})")
-    elif rsi_history:
-        drop = round(rsi_history[0] - rsi, 1)
-        if drop >= 5:
-            parts.append(f"RSI fell {drop} pts today ({rsi})")
-        else:
-            parts.append(f"RSI oversold at {rsi}")
-    else:
-        parts.append(f"RSI oversold at {rsi}")
-
-    # RVOL context
-    parts.append(f"volume {rvol}x daily avg")
-
-    # Price action: within 3% of 26-day low?
-    price = float(closes.iloc[-1])
-    prev  = float(closes.iloc[-2])
-    low26 = float(closes.tail(26).min())
-    if price <= low26 * 1.03:
-        parts.append("bouncing off 26-day low" if price >= prev else "near 26-day low")
-
-    return "; ".join(parts)
+    return today_vol / avg_vol
 
 
 def _is_market_hours(now_et: datetime) -> bool:
@@ -160,7 +120,8 @@ def _scan(watchlist: list[str]) -> list[dict]:
             if rsi is None or rsi >= RSI_MAX:
                 continue
 
-            rvol = _rvol(symbol)
+            info = yf.Ticker(symbol).info
+            rvol = _rvol(info)
             if rvol is None or rvol < RVOL_MIN:
                 continue
 
@@ -175,7 +136,6 @@ def _scan(watchlist: list[str]) -> list[dict]:
             if score < SCORE_MIN:
                 continue
 
-            # 5-day trend for direction signal
             ref = float(closes.iloc[-5]) if len(closes) >= 5 else prev_close
             direction = "↑ Bullish" if price > ref else "↓ Bearish"
 
@@ -187,7 +147,9 @@ def _scan(watchlist: list[str]) -> list[dict]:
                 "rvol": round(rvol, 2),
                 "score": score,
                 "direction": direction,
-                "reason": _build_reason(closes, round(rsi, 1), round(rvol, 2)),
+                "sector": info.get("sector") or "N/A",
+                "rsi_pts": round(9 * rsi_factor * 0.6),
+                "rvol_pts": round(9 * rvol_factor * 0.4),
             })
         except Exception as exc:
             log.debug("Skip %s: %s", symbol, exc)
@@ -226,30 +188,29 @@ class _AlertManager:
 
 
 def _format(s: dict) -> str:
-    chg = (s["price"] - s["prev_close"]) / s["prev_close"] * 100
-    sign = "+" if chg >= 0 else ""
-    entry = s["price"]
-    stop  = round(entry * 0.95, 2)
-    tp1   = round(entry * 1.08, 2)
-    tp2   = round(entry * 1.15, 2)
-    tp3   = round(entry * 1.25, 2)
+    entry    = s["price"]
+    stop     = round(entry * 0.95, 2)
+    trail    = round(entry * 1.02, 2)
     rvol_val = s["rvol"]
     rvol_str = f"{min(rvol_val, 20.0):.2f}+" if rvol_val > 20 else f"{rvol_val:.2f}"
+    trend    = "🟢 BULL" if "Bullish" in s["direction"] else "🔴 BEAR"
     return (
-        f"\U0001f6a8 *ALERT: ${s['ticker']}*\n"
-        f"Price:     `${entry}` ({sign}{chg:.1f}%)\n"
-        f"RSI:       `{s['rsi']}`\n"
-        f"RVOL:      `{rvol_str}x`\n"
-        f"Score:     `{s['score']}`\n"
-        f"Direction: {s['direction']}\n"
+        f"{trend}\n"
+        f"========================\n"
+        f"🤖 SMART - כניסה חדשה!\n"
+        f"✅ *{s['ticker']}* | REVERSAL | {s['sector']}\n"
+        f"${entry} 💰 | ציון: {s['score']}/10 ⭐\n"
         f"\n"
-        f"Entry:     `${entry}`\n"
-        f"Stop Loss: `${stop}` (-5%)\n"
-        f"TP1:       `${tp1}` (+8%)\n"
-        f"TP2:       `${tp2}` (+15%)\n"
-        f"TP3:       `${tp3}` (+25%)\n"
+        f"כניסה: ${entry} 💰\n"
+        f"🔴 SL: ${stop} (-5%)\n"
+        f"📈 Trailing 2% ${trail}\n"
+        f"⏰ פקיעה רק בהפסד אחרי 7 ימים\n"
         f"\n"
-        f"📌 *Why selected:* {s['reason']}"
+        f"פירוט: 📊\n"
+        f"REVERSAL ✅ +{s['rsi_pts']}\n"
+        f"RVOL {rvol_str}x ✅ +{s['rvol_pts']}\n"
+        f"\n"
+        f"📉 RSI:{s['rsi']} | RVOL:{rvol_str}x"
     )
 
 
